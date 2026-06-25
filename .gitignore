@@ -187,6 +187,8 @@ gmon.out
 .scons_env.json
 .scons_node_count
 
+nupkgs/
+
 # Sourcetrail
 *.srctrl*
 
