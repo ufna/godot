@@ -58,6 +58,7 @@ sys_env.AddJSExterns(
 sys_env.AddJSPost(
     [
         "js/patches/patch_em_gl.js",
+        "js/patches/patch_em_raf.js",
     ]
 )
 
