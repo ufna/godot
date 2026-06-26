@@ -16,7 +16,7 @@
 
   <!-- Godot doesn't load globalization data so we must enable invariant mode. -->
   <PropertyGroup>
-    <InvariantGlobalization>true</InvariantGlobalization>
+    <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>
 
   <ItemGroup>

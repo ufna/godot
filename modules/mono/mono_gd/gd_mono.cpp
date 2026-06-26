@@ -99,6 +99,7 @@ mono_assembly_load_from_full_fn mono_assembly_load_from_full = nullptr;
 #ifdef WEB_ENABLED
 extern "C" {
 void mono_wasm_load_runtime(int debug_level);
+int mono_wasm_load_icu_data(const void *data);
 }
 #endif
 #endif // !TOOLS_ENABLED
@@ -634,6 +635,23 @@ MonoMethod *_initialize_method;
 
 godot_plugins_initialize_fn initialize_monovm_and_godot_plugins(bool &r_runtime_initialized) {
 	mono_install_assembly_preload_hook(&load_assembly_from_pck, nullptr);
+
+	// Load the .NET ICU data so globalization works (the runtime is built non-invariant).
+	// dotnet.js normally does this; the static-linked runtime has no JS loader, so do it
+	// here before the runtime starts. The runtime keeps the pointer, so it must outlive it.
+	{
+		Ref<FileAccess> icu_file = FileAccess::open("res://icudt.dat", FileAccess::READ);
+		if (icu_file.is_valid()) {
+			static Vector<uint8_t> icu_data = icu_file->get_buffer(icu_file->get_length());
+			if (mono_wasm_load_icu_data(icu_data.ptr()) == 0) {
+				ERR_PRINT(".NET: mono_wasm_load_icu_data failed; globalization will be invariant.");
+			} else {
+				print_verbose(".NET: ICU data loaded for globalization.");
+			}
+		} else {
+			ERR_PRINT(".NET: res://icudt.dat not found; globalization will be invariant.");
+		}
+	}
 
 	mono_wasm_load_runtime(1);
 
