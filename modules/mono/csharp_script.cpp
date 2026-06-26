@@ -1495,8 +1495,15 @@ Object *CSharpInstance::get_owner() {
 bool CSharpInstance::set(const StringName &p_name, const Variant &p_value) {
 	ERR_FAIL_COND_V(script.is_null(), false);
 
+	// Web: mask the low byte of the bridge return (see CSharpInstance::get).
+#ifdef WEB_ENABLED
+	uint32_t raw = ((uint32_t(GD_CLR_STDCALL *)(GCHandleIntPtr, const StringName *, const Variant *))GDMonoCache::managed_callbacks.CSharpInstanceBridge_Set)(
+			gchandle.get_intptr(), &p_name, &p_value);
+	return (raw & 0xFF) != 0;
+#else
 	return GDMonoCache::managed_callbacks.CSharpInstanceBridge_Set(
 			gchandle.get_intptr(), &p_name, &p_value);
+#endif
 }
 
 bool CSharpInstance::get(const StringName &p_name, Variant &r_ret) const {
@@ -1504,8 +1511,16 @@ bool CSharpInstance::get(const StringName &p_name, Variant &r_ret) const {
 
 	Variant ret_value;
 
+	// Web (Mono interpreter) doesn't zero-extend the godot_bool return; mask the low byte,
+	// else Object::get treats unhandled native-only props as handled and returns Nil.
+#ifdef WEB_ENABLED
+	uint32_t raw = ((uint32_t(GD_CLR_STDCALL *)(GCHandleIntPtr, const StringName *, Variant *))GDMonoCache::managed_callbacks.CSharpInstanceBridge_Get)(
+			gchandle.get_intptr(), &p_name, &ret_value);
+	bool ret = (raw & 0xFF) != 0;
+#else
 	bool ret = GDMonoCache::managed_callbacks.CSharpInstanceBridge_Get(
 			gchandle.get_intptr(), &p_name, &ret_value);
+#endif
 
 	if (ret) {
 		r_ret = ret_value;
