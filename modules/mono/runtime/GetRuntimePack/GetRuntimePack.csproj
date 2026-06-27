@@ -42,6 +42,10 @@
     <TrimmerRootAssembly Include="System.Private.CoreLib" />
   </ItemGroup>
 
+  <ItemGroup>
+    <TrimmerRootAssembly Include="System.IO.Compression" />
+  </ItemGroup>
+
   <Target Name="EchoRuntimeLocation" AfterTargets="ResolveFrameworkReferences">
     <Error Condition="'$(RuntimeIdentifier)' == ''" Message="Need to set RuntimeIdentifier to the target platform RID" />
     <ItemGroup>
