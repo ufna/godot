@@ -59,13 +59,21 @@ typedef struct {
 #define GODOT_STRING_SIZE sizeof(void *)
 
 typedef struct {
+#ifdef WEB_ENABLED
+	void *_dont_touch_that;
+#else
 	uint8_t _dont_touch_that[GODOT_STRING_SIZE];
+#endif
 } godot_string;
 
 #define GODOT_STRING_NAME_SIZE sizeof(void *)
 
 typedef struct {
+#ifdef WEB_ENABLED
+	void *_dont_touch_that;
+#else
 	uint8_t _dont_touch_that[GODOT_STRING_NAME_SIZE];
+#endif
 } godot_string_name;
 
 #define GODOT_PACKED_ARRAY_SIZE (2 * sizeof(void *))
@@ -174,7 +182,11 @@ typedef struct {
 #define GODOT_NODE_PATH_SIZE sizeof(void *)
 
 typedef struct {
+#ifdef WEB_ENABLED
+	void *_dont_touch_that;
+#else
 	uint8_t _dont_touch_that[GODOT_NODE_PATH_SIZE];
+#endif
 } godot_node_path;
 
 #define GODOT_RID_SIZE sizeof(uint64_t)
