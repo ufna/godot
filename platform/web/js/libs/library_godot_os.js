@@ -161,7 +161,7 @@ const GodotFS = {
 					if (err) {
 						GodotFS._mount_points = [];
 						GodotFS._idbfs = false;
-						GodotRuntime.print(`IndexedDB not available: ${err.message}`);
+						GodotRuntime.print('IndexedDB not available:', (err && err.message) || err);
 					} else {
 						GodotFS._idbfs = true;
 					}
@@ -197,7 +197,7 @@ const GodotFS = {
 			return new Promise(function (resolve, reject) {
 				FS.syncfs(false, function (error) {
 					if (error) {
-						GodotRuntime.error(`Failed to save IDB file system: ${error.message}`);
+						GodotRuntime.error('Failed to save IDB file system:', (error && error.message) || error);
 					}
 					GodotFS._syncing = false;
 					resolve(error);

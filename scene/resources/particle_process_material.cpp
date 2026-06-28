@@ -1952,7 +1952,11 @@ void ParticleProcessMaterial::set_sub_emitter_mode(SubEmitterMode p_sub_emitter_
 	_queue_shader_change();
 	notify_property_list_changed();
 	if (sub_emitter_mode != SUB_EMITTER_DISABLED && RenderingServer::get_singleton()->is_low_end()) {
-		WARN_PRINT_ONCE_ED("Sub-emitter modes other than SUB_EMITTER_DISABLED are not supported in the Compatibility renderer.");
+		static bool message_shown = false;
+		if (!message_shown) {
+			message_shown = true;
+			print_line("Sub-emitter modes other than SUB_EMITTER_DISABLED are not supported in the Compatibility renderer.");
+		}
 	}
 }
 

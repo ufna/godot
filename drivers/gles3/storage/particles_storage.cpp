@@ -370,7 +370,11 @@ void ParticlesStorage::particles_restart(RID p_particles) {
 
 void ParticlesStorage::particles_set_subemitter(RID p_particles, RID p_subemitter_particles) {
 	if (p_subemitter_particles.is_valid()) {
-		WARN_PRINT_ONCE_ED("The Compatibility renderer does not support particle sub-emitters.");
+		static bool message_shown = false;
+		if (!message_shown) {
+			message_shown = true;
+			print_line("The Compatibility renderer does not support particle sub-emitters.");
+		}
 	}
 }
 
