@@ -2826,7 +2826,7 @@ RasterizerCanvasGLES3::RasterizerCanvasGLES3() {
 	global_defines += "#define MAX_GLOBAL_SHADER_UNIFORMS 256\n"; // TODO: this is arbitrary for now
 	global_defines += "#define MAX_LIGHTS " + itos(data.max_lights_per_render) + "\n";
 
-	GLES3::MaterialStorage::get_singleton()->shaders.canvas_shader.initialize(global_defines, 1);
+	GLES3::MaterialStorage::get_singleton()->shaders.canvas_shader.initialize(global_defines, 1, true);
 	data.canvas_shader_default_version = GLES3::MaterialStorage::get_singleton()->shaders.canvas_shader.version_create();
 
 	state.shadow_texture_size = GLOBAL_GET("rendering/2d/shadow_atlas/size");

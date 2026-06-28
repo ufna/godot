@@ -38,6 +38,10 @@
 #include "drivers/gles3/rasterizer_gles3.h"
 #include "drivers/gles3/storage/config.h"
 
+#ifndef GL_COMPLETION_STATUS_KHR
+#define GL_COMPLETION_STATUS_KHR 0x91B1
+#endif
+
 static String _mkid(const String &p_id) {
 	String id = "m_" + p_id.replace("__", "_dus_");
 	return id.replace("__", "_dus_"); //doubleunderscore is reserved in glsl
@@ -466,6 +470,158 @@ void ShaderGLES3::_compile_specialization(Version::Specialization &spec, uint32_
 	spec.ok = true;
 }
 
+bool ShaderGLES3::_async_compilation_active() const {
+#ifdef WEB_ENABLED
+	if (!allow_async) {
+		return false;
+	}
+	const GLES3::Config *config = GLES3::Config::get_singleton();
+	return config != nullptr && config->parallel_shader_compile_supported;
+#else
+	return false;
+#endif
+}
+
+void ShaderGLES3::_compile_specialization_async(Version::Specialization &spec, uint32_t p_variant, Version *p_version, uint64_t p_specialization) {
+	spec.id = glCreateProgram();
+	spec.ok = false;
+	spec.build_queued = false;
+
+	{
+		StringBuilder builder;
+		_build_variant_code(builder, p_variant, p_version, STAGE_TYPE_VERTEX, p_specialization);
+
+		spec.vert_id = glCreateShader(GL_VERTEX_SHADER);
+		String builder_string = builder.as_string();
+		CharString cs = builder_string.utf8();
+		const char *cstr = cs.ptr();
+		GLint cstr_len = cs.length();
+		glShaderSource(spec.vert_id, 1, &cstr, &cstr_len);
+		glCompileShader(spec.vert_id);
+	}
+
+	{
+		StringBuilder builder;
+		_build_variant_code(builder, p_variant, p_version, STAGE_TYPE_FRAGMENT, p_specialization);
+
+		spec.frag_id = glCreateShader(GL_FRAGMENT_SHADER);
+		String builder_string = builder.as_string();
+		CharString cs = builder_string.utf8();
+		const char *cstr = cs.ptr();
+		GLint cstr_len = cs.length();
+		glShaderSource(spec.frag_id, 1, &cstr, &cstr_len);
+		glCompileShader(spec.frag_id);
+	}
+
+	glAttachShader(spec.id, spec.frag_id);
+	glAttachShader(spec.id, spec.vert_id);
+
+	if (feedback_count) {
+		Vector<const char *> feedback;
+		for (int i = 0; i < feedback_count; i++) {
+			if (feedbacks[i].specialization == 0 || (feedbacks[i].specialization & p_specialization)) {
+				feedback.push_back(feedbacks[i].name);
+			}
+		}
+
+		if (feedback.size()) {
+			glTransformFeedbackVaryings(spec.id, feedback.size(), feedback.ptr(), GL_INTERLEAVED_ATTRIBS);
+		}
+	}
+
+	glLinkProgram(spec.id);
+
+	spec.build_queued = true;
+}
+
+bool ShaderGLES3::_poll_specialization(Version::Specialization &spec, Version *p_version) {
+	if (!spec.build_queued) {
+		return spec.ok;
+	}
+
+	GLint done = 0;
+	glGetProgramiv(spec.id, GL_COMPLETION_STATUS_KHR, &done);
+	if (done == GL_FALSE) {
+		return false;
+	}
+
+	GLint status = 0;
+
+	glGetShaderiv(spec.vert_id, GL_COMPILE_STATUS, &status);
+	if (status == GL_FALSE) {
+		GLsizei iloglen = 0;
+		glGetShaderiv(spec.vert_id, GL_INFO_LOG_LENGTH, &iloglen);
+		if (iloglen > 0) {
+			char *ilogmem = (char *)Memory::alloc_static_zeroed(iloglen + 1);
+			glGetShaderInfoLog(spec.vert_id, iloglen, &iloglen, ilogmem);
+			ERR_PRINT(name + ": Vertex shader compilation failed (async):\n" + String(ilogmem));
+			Memory::free_static(ilogmem);
+		} else {
+			ERR_PRINT(name + ": Vertex shader compilation failed (async).");
+		}
+		glDeleteShader(spec.vert_id);
+		glDeleteShader(spec.frag_id);
+		glDeleteProgram(spec.id);
+		spec.id = 0;
+		spec.vert_id = 0;
+		spec.frag_id = 0;
+		spec.build_queued = false;
+		spec.ok = false;
+		return false;
+	}
+
+	glGetShaderiv(spec.frag_id, GL_COMPILE_STATUS, &status);
+	if (status == GL_FALSE) {
+		GLsizei iloglen = 0;
+		glGetShaderiv(spec.frag_id, GL_INFO_LOG_LENGTH, &iloglen);
+		if (iloglen > 0) {
+			char *ilogmem = (char *)Memory::alloc_static_zeroed(iloglen + 1);
+			glGetShaderInfoLog(spec.frag_id, iloglen, &iloglen, ilogmem);
+			ERR_PRINT(name + ": Fragment shader compilation failed (async):\n" + String(ilogmem));
+			Memory::free_static(ilogmem);
+		} else {
+			ERR_PRINT(name + ": Fragment shader compilation failed (async).");
+		}
+		glDeleteShader(spec.vert_id);
+		glDeleteShader(spec.frag_id);
+		glDeleteProgram(spec.id);
+		spec.id = 0;
+		spec.vert_id = 0;
+		spec.frag_id = 0;
+		spec.build_queued = false;
+		spec.ok = false;
+		return false;
+	}
+
+	glGetProgramiv(spec.id, GL_LINK_STATUS, &status);
+	if (status == GL_FALSE) {
+		GLsizei iloglen = 0;
+		glGetProgramiv(spec.id, GL_INFO_LOG_LENGTH, &iloglen);
+		if (iloglen > 0) {
+			char *ilogmem = (char *)Memory::alloc_static_zeroed(iloglen + 1);
+			glGetProgramInfoLog(spec.id, iloglen, &iloglen, ilogmem);
+			ERR_PRINT(name + ": Program linking failed (async):\n" + String(ilogmem));
+			Memory::free_static(ilogmem);
+		} else {
+			ERR_PRINT(name + ": Program linking failed (async).");
+		}
+		glDeleteShader(spec.vert_id);
+		glDeleteShader(spec.frag_id);
+		glDeleteProgram(spec.id);
+		spec.id = 0;
+		spec.vert_id = 0;
+		spec.frag_id = 0;
+		spec.build_queued = false;
+		spec.ok = false;
+		return false;
+	}
+
+	_get_uniform_locations(spec, p_version);
+	spec.build_queued = false;
+	spec.ok = true;
+	return true;
+}
+
 RS::ShaderNativeSourceCode ShaderGLES3::version_get_native_source_code(RID p_version) {
 	Version *version = version_owner.get_or_null(p_version);
 	RS::ShaderNativeSourceCode source_code;
@@ -704,14 +860,19 @@ void ShaderGLES3::_initialize_version(Version *p_version) {
 		return;
 	}
 	p_version->variants.reserve(variant_count);
+	const bool async = _async_compilation_active();
 	for (int i = 0; i < variant_count; i++) {
 		AHashMap<uint64_t, Version::Specialization> variant;
 		p_version->variants.push_back(variant);
 		Version::Specialization spec;
-		_compile_specialization(spec, i, p_version, specialization_default_mask);
+		if (async) {
+			_compile_specialization_async(spec, i, p_version, specialization_default_mask);
+		} else {
+			_compile_specialization(spec, i, p_version, specialization_default_mask);
+		}
 		p_version->variants[i].insert(specialization_default_mask, spec);
 	}
-	if (use_cache) {
+	if (use_cache && !async) {
 		_save_to_cache(p_version);
 	}
 }
@@ -763,9 +924,10 @@ bool ShaderGLES3::shader_cache_cleanup_on_start = false;
 ShaderGLES3::ShaderGLES3() {
 }
 
-void ShaderGLES3::initialize(const String &p_general_defines, int p_base_texture_index) {
+void ShaderGLES3::initialize(const String &p_general_defines, int p_base_texture_index, bool p_allow_async) {
 	general_defines = p_general_defines.utf8();
 	base_texture_index = p_base_texture_index;
+	allow_async = p_allow_async;
 
 	_init();
 

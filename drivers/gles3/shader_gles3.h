@@ -110,6 +110,10 @@ private:
 	void _get_uniform_locations(Version::Specialization &spec, Version *p_version);
 	void _compile_specialization(Version::Specialization &spec, uint32_t p_variant, Version *p_version, uint64_t p_specialization);
 
+	void _compile_specialization_async(Version::Specialization &spec, uint32_t p_variant, Version *p_version, uint64_t p_specialization);
+	bool _poll_specialization(Version::Specialization &spec, Version *p_version);
+	bool _async_compilation_active() const;
+
 	void _clear_version(Version *p_version);
 	void _initialize_version(Version *p_version);
 
@@ -178,6 +182,8 @@ private:
 	int base_texture_index = 0;
 	Version::Specialization *current_shader = nullptr;
 
+	bool allow_async = false;
+
 protected:
 	ShaderGLES3();
 	void _setup(const char *p_vertex_code, const char *p_fragment_code, const char *p_name, int p_uniform_count, const char **p_uniform_names, int p_ubo_count, const UBOPair *p_ubos, int p_feedback_count, const Feedback *p_feedback, int p_texture_count, const TexUnitPair *p_tex_units, int p_specialization_count, const Specialization *p_specializations, int p_variant_count, const char **p_variants);
@@ -192,12 +198,15 @@ protected:
 			_initialize_version(version); //may lack initialization
 		}
 
+		const bool async = _async_compilation_active();
+
 		Version::Specialization *spec = version->variants[p_variant].getptr(p_specialization);
 		if (!spec) {
-			if (false) {
-				// Queue load this specialization and use defaults in the meantime (TODO)
-
-				spec = version->variants[p_variant].getptr(specialization_default_mask);
+			if (async) {
+				Version::Specialization s;
+				_compile_specialization_async(s, p_variant, version, p_specialization);
+				version->variants[p_variant].insert(p_specialization, s);
+				return false;
 			} else {
 				// Compile on the spot
 				Version::Specialization s;
@@ -209,12 +218,15 @@ protected:
 				}
 			}
 		} else if (spec->build_queued) {
-			// Still queued, wait
-			spec = version->variants[p_variant].getptr(specialization_default_mask);
+			if (!_poll_specialization(*spec, version)) {
+				return false;
+			}
 		}
 
 		if (!spec || !spec->ok) {
-			WARN_PRINT_ONCE("shader failed to compile, unable to bind shader.");
+			if (!async) {
+				WARN_PRINT_ONCE("shader failed to compile, unable to bind shader.");
+			}
 			return false;
 		}
 
@@ -252,7 +264,7 @@ public:
 
 	RS::ShaderNativeSourceCode version_get_native_source_code(RID p_version);
 
-	void initialize(const String &p_general_defines = "", int p_base_texture_index = 0);
+	void initialize(const String &p_general_defines = "", int p_base_texture_index = 0, bool p_allow_async = false);
 	virtual ~ShaderGLES3();
 };
 

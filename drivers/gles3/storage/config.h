@@ -85,6 +85,8 @@ public:
 	bool srgb_framebuffer_supported = false;
 	bool unorm16_texture_supported = false;
 
+	bool parallel_shader_compile_supported = false;
+
 	bool force_vertex_shading = false;
 	bool specular_occlusion = false;
 

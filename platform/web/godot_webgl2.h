@@ -38,6 +38,8 @@
 #define GL_MAX_VIEWS_OVR 0x9631
 #define GL_FRAMEBUFFER_INCOMPLETE_VIEW_TARGETS_OVR 0x9633
 
+#define GL_COMPLETION_STATUS_KHR 0x91B1
+
 #ifdef __cplusplus
 extern "C" {
 #endif
