@@ -25,6 +25,12 @@ namespace Godot.NativeInterop
 
 namespace Godot
 {
+    internal static class GodotRootSignatures
+    {
+        [DllImport("__godot_root", EntryPoint = "__godot_root_f")]
+        internal static extern float RootFloatReturn();
+    }
+
     public class SignalAwaiter
     {
         [UnmanagedCallersOnly]
