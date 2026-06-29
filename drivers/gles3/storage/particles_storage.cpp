@@ -300,13 +300,21 @@ void ParticlesStorage::particles_set_fractional_delta(RID p_particles, bool p_en
 
 void ParticlesStorage::particles_set_trails(RID p_particles, bool p_enable, double p_length) {
 	if (p_enable) {
-		WARN_PRINT_ONCE_ED("The Compatibility renderer does not support particle trails.");
+		static bool message_shown = false;
+		if (!message_shown) {
+			message_shown = true;
+			print_line("The Compatibility renderer does not support particle trails.");
+		}
 	}
 }
 
 void ParticlesStorage::particles_set_trail_bind_poses(RID p_particles, const Vector<Transform3D> &p_bind_poses) {
 	if (p_bind_poses.size() != 0) {
-		WARN_PRINT_ONCE_ED("The Compatibility renderer does not support particle trails.");
+		static bool message_shown = false;
+		if (!message_shown) {
+			message_shown = true;
+			print_line("The Compatibility renderer does not support particle trails.");
+		}
 	}
 }
 
