@@ -100,6 +100,17 @@ const Preloader = /** @constructor */ function () { // eslint-disable-line no-un
 		progressFunc = callback;
 	};
 
+	this.trackExtra = function (name, total) {
+		loadingFiles[name] = { total: total || 0, loaded: 0, done: false };
+		requestAnimationFrame(animateProgress);
+	};
+	this.updateExtra = function (name, loaded) {
+		if (loadingFiles[name]) { loadingFiles[name].loaded = loaded; }
+	};
+	this.finishExtra = function (name) {
+		if (loadingFiles[name]) { loadingFiles[name].loaded = loadingFiles[name].total; loadingFiles[name].done = true; }
+	};
+
 	this.loadPromise = function (file, fileSize, raw = false) {
 		return retry(loadFetch.bind(null, file, loadingFiles, fileSize, raw), DOWNLOAD_ATTEMPTS_MAX);
 	};

@@ -1114,6 +1114,13 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 	packed_data->add_pack_source(zip_packed_data);
 #endif
 
+#if defined(WEB_ENABLED) && defined(OPFS_ENABLED)
+	{
+		extern void register_web_pack_source();
+		register_web_pack_source();
+	}
+#endif
+
 	// Exit error code used in the `goto error` conditions.
 	// It's returned as the program exit code. ERR_HELP is special cased and handled as success (0).
 	Error exit_err = ERR_INVALID_PARAMETER;

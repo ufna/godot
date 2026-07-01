@@ -91,6 +91,15 @@ const InternalConfig = function (initConfig) { // eslint-disable-line no-unused-
 		 */
 		args: [],
 		/**
+		 * How resources are stored/loaded: 'ram' (load a .pck into memory) or 'opfs_storage' (stream
+		 * index.bin into OPFS and read res:// on demand). Baked in by the export.
+		 *
+		 * @memberof EngineConfig
+		 * @type {string}
+		 * @default
+		 */
+		webBundleType: 'ram',
+		/**
 		 * When enabled, the game canvas will automatically grab the focus when the engine starts.
 		 *
 		 * @memberof EngineConfig
@@ -272,6 +281,7 @@ const InternalConfig = function (initConfig) { // eslint-disable-line no-unused-
 		this.emscriptenPoolSize = parse('emscriptenPoolSize', this.emscriptenPoolSize);
 		this.godotPoolSize = parse('godotPoolSize', this.godotPoolSize);
 		this.args = parse('args', this.args);
+		this.webBundleType = parse('webBundleType', this.webBundleType);
 		this.onExecute = parse('onExecute', this.onExecute);
 		this.onExit = parse('onExit', this.onExit);
 	};

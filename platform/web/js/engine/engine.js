@@ -15,6 +15,233 @@ const Engine = (function () {
 	let loadPath = '';
 	let initPromise = null;
 
+	const BUNDLE_MANIFEST = 'bundle.json';
+	const BUNDLE_FILES_DIR = 'godot-res';
+	const BUNDLE_VERSION_DIR = 'godot-bundle';
+	const BUNDLE_VERSION_NAME = 'version';
+	const ZIP_STREAM_WORKER_SRC = `
+const SIG_LOCAL = 0x04034b50;
+const SIG_CENTRAL = 0x02014b50;
+const SIG_EOCD = 0x06054b50;
+function makeReader(stream) {
+	const reader = stream.getReader();
+	let chunks = [];
+	let size = 0;
+	let done = false;
+	let totalRead = 0;
+	async function pull() {
+		const r = await reader.read();
+		if (r.done) { done = true; return false; }
+		chunks.push(r.value); size += r.value.length; totalRead += r.value.length; return true;
+	}
+	async function read(n) {
+		while (size < n && !done) { await pull(); }
+		if (size < n) { return null; }
+		const out = new Uint8Array(n);
+		let off = 0;
+		while (off < n) {
+			const c = chunks[0];
+			const take = Math.min(c.length, n - off);
+			out.set(c.subarray(0, take), off);
+			off += take; size -= take;
+			if (take === c.length) { chunks.shift(); } else { chunks[0] = c.subarray(take); }
+		}
+		return out;
+	}
+	return { read: read, bytesRead: function () { return totalRead; } };
+}
+async function inflateRaw(bytes) {
+	const ds = new DecompressionStream('deflate-raw');
+	const stream = new Blob([bytes]).stream().pipeThrough(ds);
+	return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+async function ensureDir(rootHandle, cache, dirPath) {
+	if (cache.has(dirPath)) { return cache.get(dirPath); }
+	const parts = dirPath.split('/');
+	let cur = rootHandle;
+	let acc = '';
+	for (const part of parts) {
+		if (!part) { continue; }
+		acc = acc ? acc + '/' + part : part;
+		if (cache.has(acc)) { cur = cache.get(acc); continue; }
+		cur = await cur.getDirectoryHandle(part, { create: true });
+		cache.set(acc, cur);
+	}
+	cache.set(dirPath, cur);
+	return cur;
+}
+self.onmessage = async function (e) {
+	const msg = e.data || {};
+	const t0 = (self.performance && self.performance.now) ? self.performance.now() : 0;
+	try {
+		const response = await fetch(msg.url);
+		if (!response.ok) { throw new Error('fetch ' + response.status); }
+		const reader = makeReader(response.body);
+		const root = await navigator.storage.getDirectory();
+		try { await root.removeEntry(msg.filesRoot, { recursive: true }); } catch (err) {}
+		const treeRoot = await root.getDirectoryHandle(msg.filesRoot, { create: true });
+		const dirCache = new Map();
+		dirCache.set('', treeRoot);
+		const dec = new TextDecoder();
+		let written = 0;
+		let dirs = 0;
+		const index = [];
+		while (true) {
+			const sig = await reader.read(4);
+			if (sig == null) { break; }
+			const s = new DataView(sig.buffer, sig.byteOffset, 4).getUint32(0, true);
+			if (s === SIG_CENTRAL || s === SIG_EOCD) { break; }
+			if (s !== SIG_LOCAL) { throw new Error('bad zip signature 0x' + s.toString(16)); }
+			const hb = await reader.read(26);
+			const h = new DataView(hb.buffer, hb.byteOffset, 26);
+			const flag = h.getUint16(2, true);
+			const method = h.getUint16(4, true);
+			const csize = h.getUint32(14, true);
+			const usize = h.getUint32(18, true);
+			const nlen = h.getUint16(22, true);
+			const mlen = h.getUint16(24, true);
+			if (csize === 0xffffffff || usize === 0xffffffff) { throw new Error('zip64 unsupported'); }
+			if (flag & 8) { throw new Error('data descriptor unsupported'); }
+			const nameBytes = await reader.read(nlen);
+			const name = dec.decode(nameBytes);
+			if (mlen) { await reader.read(mlen); }
+			const comp = csize > 0 ? await reader.read(csize) : new Uint8Array(0);
+			if (name.charAt(name.length - 1) === '/') { dirs++; continue; }
+			let data;
+			if (method === 0) { data = comp; }
+			else if (method === 8) { data = await inflateRaw(comp); }
+			else { throw new Error('unsupported method ' + method); }
+			const slash = name.lastIndexOf('/');
+			const dirPath = slash >= 0 ? name.slice(0, slash) : '';
+			const fileName = slash >= 0 ? name.slice(slash + 1) : name;
+			const dir = await ensureDir(treeRoot, dirCache, dirPath);
+			const handle = await dir.getFileHandle(fileName, { create: true });
+			const ah = await handle.createSyncAccessHandle();
+			ah.write(data, { at: 0 });
+			ah.truncate(data.length);
+			ah.flush();
+			ah.close();
+			written++;
+			index.push({ name: name, size: data.length });
+			if ((written % 300) === 0) { self.postMessage({ type: 'progress', written: written, loaded: reader.bytesRead() }); }
+		}
+		const enc = new TextEncoder();
+		const nameBufs = [];
+		let idxTotal = 4;
+		for (const e of index) { const nb = enc.encode(e.name); nameBufs.push(nb); idxTotal += 8 + nb.length; }
+		const idx = new Uint8Array(idxTotal);
+		const idv = new DataView(idx.buffer);
+		let io = 0;
+		idv.setUint32(io, index.length, true); io += 4;
+		for (let k = 0; k < index.length; k++) {
+			const nb = nameBufs[k];
+			idv.setUint32(io, nb.length, true); io += 4;
+			idx.set(nb, io); io += nb.length;
+			idv.setUint32(io, index[k].size >>> 0, true); io += 4;
+		}
+		const ih = await treeRoot.getFileHandle('.godot_opfs_index', { create: true });
+		const iah = await ih.createSyncAccessHandle();
+		iah.write(idx, { at: 0 });
+		iah.truncate(idx.length);
+		iah.flush();
+		iah.close();
+		const t1 = (self.performance && self.performance.now) ? self.performance.now() : 0;
+		self.postMessage({ type: 'done', written: written, dirs: dirs, elapsedMs: Math.round(t1 - t0) });
+	} catch (err) {
+		self.postMessage({ type: 'error', message: String((err && err.message) || err) });
+	}
+};
+`;
+
+	function readBundleVersion() {
+		return navigator.storage.getDirectory().then(function (root) {
+			return root.getDirectoryHandle(BUNDLE_VERSION_DIR);
+		}).then(function (dir) {
+			return dir.getFileHandle(BUNDLE_VERSION_NAME);
+		}).then(function (handle) {
+			return handle.getFile();
+		}).then(function (f) {
+			return f.text();
+		}).catch(function () {
+			return null;
+		});
+	}
+
+	function writeBundleVersion(version) {
+		return navigator.storage.getDirectory().then(function (root) {
+			return root.getDirectoryHandle(BUNDLE_VERSION_DIR, { 'create': true });
+		}).then(function (dir) {
+			return dir.getFileHandle(BUNDLE_VERSION_NAME, { 'create': true });
+		}).then(function (handle) {
+			return handle.createWritable();
+		}).then(function (writable) {
+			return writable.write(version).then(function () {
+				return writable.close();
+			});
+		});
+	}
+
+	function removeBundleVersion() {
+		return navigator.storage.getDirectory().then(function (root) {
+			return root.getDirectoryHandle(BUNDLE_VERSION_DIR, { 'create': true });
+		}).then(function (dir) {
+			return dir.removeEntry(BUNDLE_VERSION_NAME).catch(function () {});
+		}).catch(function () {});
+	}
+
+	function runStreamWorker(url, filesRoot, onProgress) {
+		return new Promise(function (resolve, reject) {
+			let worker;
+			try {
+				const blobUrl = URL.createObjectURL(new Blob([ZIP_STREAM_WORKER_SRC], { 'type': 'text/javascript' }));
+				worker = new Worker(blobUrl);
+			} catch (e) {
+				reject(e);
+				return;
+			}
+			worker.onmessage = function (ev) {
+				const d = ev.data || {};
+				if (d.type === 'progress') { if (onProgress) { onProgress(d.loaded); } }
+				else if (d.type === 'done') { worker.terminate(); resolve(d); }
+				else if (d.type === 'error') { worker.terminate(); reject(new Error(d.message)); }
+			};
+			worker.onerror = function () {
+				try { worker.terminate(); } catch (e) {}
+				reject(new Error('bundle stream worker error'));
+			};
+			worker.postMessage({ 'url': url, 'filesRoot': filesRoot });
+		});
+	}
+
+	function loadBundleToOpfs() {
+		if (!(navigator.storage && typeof navigator.storage.getDirectory === 'function')) {
+			return Promise.reject(new Error('OPFS unavailable'));
+		}
+		if (typeof navigator.storage.persist === 'function') {
+			navigator.storage.persist();
+		}
+		return fetch(BUNDLE_MANIFEST, { 'cache': 'no-store' }).then(function (response) {
+			if (!response.ok) { throw new Error('bundle.json ' + response.status); }
+			return response.json();
+		}).then(function (manifest) {
+			return readBundleVersion().then(function (stored) {
+				if (stored === manifest.sha256) {
+					return null;
+				}
+				const url = new URL(manifest.bundle + '?' + manifest.sha256, self.location.href).href;
+				preloader.trackExtra('bundle', manifest.bytes);
+				return removeBundleVersion().then(function () {
+					return runStreamWorker(url, BUNDLE_FILES_DIR, function (loaded) {
+						preloader.updateExtra('bundle', loaded);
+					});
+				}).then(function () {
+					preloader.finishExtra('bundle');
+					return writeBundleVersion(manifest.sha256);
+				});
+			});
+		});
+	}
+
 	/**
 	 * @classdesc The ``Engine`` class provides methods for loading and starting exported projects on the Web. For default export
 	 * settings, this is already part of the exported HTML page. To understand practical use of the ``Engine`` class,
@@ -195,16 +422,17 @@ const Engine = (function () {
 			 */
 			startGame: function (override) {
 				this.config.update(override);
-				// Add main-pack argument.
 				const exe = this.config.executable;
-				const pack = this.config.mainPack || `${exe}.pck`;
-				this.config.args = ['--main-pack', pack].concat(this.config.args);
-				// Start and init with execName as loadPath if not inited.
 				const me = this;
-				return Promise.all([
-					this.init(exe),
-					this.preloadFile(pack, pack),
-				]).then(function () {
+				if (this.config.webBundleType === 'opfs_storage') {
+					this.config.args = ['--main-pack', 'opfs://'].concat(this.config.args);
+					return Promise.all([this.init(exe), loadBundleToOpfs()]).then(function () {
+						return me.start.apply(me);
+					});
+				}
+				const pack = `${(this.config.mainPack || exe)}.pck`;
+				this.config.args = ['--main-pack', pack].concat(this.config.args);
+				return Promise.all([this.init(exe), this.preloadFile(pack, pack)]).then(function () {
 					return me.start.apply(me);
 				});
 			},

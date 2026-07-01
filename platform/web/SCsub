@@ -30,6 +30,9 @@ web_files = [
     "os_web.cpp",
 ]
 
+if env["web_bundle_type"] == "opfs_storage":
+    web_files.append("file_access_opfs.cpp")
+
 if env["target"] == "editor":
     env.add_source_files(web_files, "editor/*.cpp")
 
@@ -47,6 +50,8 @@ sys_env.AddJSLibraries(
         "js/libs/library_godot_webgl2.js",
     ]
 )
+if env["web_bundle_type"] == "opfs_storage":
+    sys_env.AddJSLibraries(["js/libs/library_godot_opfs.js"])
 sys_env.AddJSExterns(
     [
         "js/libs/library_godot_webgl2.externs.js",

@@ -35,7 +35,9 @@
 
 #include "core/config/project_settings.h"
 #include "core/io/dir_access.h"
+#include "core/io/zip_io.h"
 #include "editor/editor_string_names.h"
+#include "editor/file_system/editor_paths.h"
 #include "editor/export/editor_export.h"
 #include "editor/import/resource_importer_texture_settings.h"
 #include "editor/settings/editor_settings.h"
@@ -152,6 +154,7 @@ void EditorExportPlatformWeb::_fix_html(Vector<uint8_t> &p_html, const Ref<Edito
 
 	config["godotPoolSize"] = p_preset->get("threads/godot_pool_size");
 	config["emscriptenPoolSize"] = p_preset->get("threads/emscripten_pool_size");
+	config["webBundleType"] = p_preset->get("variant/web_bundle_type");
 
 	String head_include;
 	if (p_preset->get("html/export_icon")) {
@@ -370,6 +373,8 @@ void EditorExportPlatformWeb::get_export_options(List<ExportOption> *r_options) 
 
 	r_options->push_back(ExportOption(PropertyInfo(Variant::BOOL, "variant/extensions_support"), false)); // GDExtension support.
 	r_options->push_back(ExportOption(PropertyInfo(Variant::BOOL, "variant/thread_support"), false, true)); // Thread support (i.e. run with or without COEP/COOP headers).
+	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "variant/web_bundle_type", PROPERTY_HINT_ENUM, "ram,opfs_storage"), "ram"));
+	r_options->push_back(ExportOption(PropertyInfo(Variant::INT, "variant/web_bundle_compression", PROPERTY_HINT_RANGE, "0,9,1"), 6));
 	r_options->push_back(ExportOption(PropertyInfo(Variant::BOOL, "vram_texture_compression/for_desktop"), true)); // S3TC
 	r_options->push_back(ExportOption(PropertyInfo(Variant::BOOL, "vram_texture_compression/for_mobile"), false)); // ETC or ETC2, depending on renderer
 
@@ -401,6 +406,10 @@ bool EditorExportPlatformWeb::get_export_option_visibility(const EditorExportPre
 
 	if (p_option == "threads/godot_pool_size" || p_option == "threads/emscripten_pool_size") {
 		return p_preset->get("variant/thread_support").operator bool();
+	}
+
+	if (p_option == "variant/web_bundle_compression") {
+		return p_preset->get("variant/web_bundle_type").operator String() != "ram";
 	}
 
 	return true;
@@ -481,6 +490,55 @@ List<String> EditorExportPlatformWeb::get_binary_extensions(const Ref<EditorExpo
 	return list;
 }
 
+struct WebBundleZipData {
+	zipFile zip = nullptr;
+	int compression = Z_DEFAULT_COMPRESSION;
+	int file_count = 0;
+};
+
+static Error _save_web_bundle_file(const Ref<EditorExportPreset> &p_preset, void *p_udata, const String &p_path, const Vector<uint8_t> &p_data, int p_file, int p_total, const Vector<String> &p_enc_in_filters, const Vector<String> &p_enc_ex_filters, const Vector<uint8_t> &p_key, uint64_t p_seed, bool p_delta) {
+	WebBundleZipData *z = (WebBundleZipData *)p_udata;
+	const String path = p_path.simplify_path().replace_first("res://", "");
+	zipOpenNewFileInZip(z->zip, path.utf8().get_data(), nullptr, nullptr, 0, nullptr, 0, nullptr, Z_DEFLATED, z->compression);
+	zipWriteInFileInZip(z->zip, p_data.ptr(), p_data.size());
+	zipCloseFileInZip(z->zip);
+	z->file_count++;
+	return OK;
+}
+
+Error EditorExportPlatformWeb::_save_web_bundle(const Ref<EditorExportPreset> &p_preset, bool p_debug, const String &p_path, int p_compression) {
+	const String tmppath = EditorPaths::get_singleton()->get_temp_dir().path_join("webbundle.tmp");
+	Ref<FileAccess> io_fa;
+	zlib_filefunc_def io = zipio_create_io(&io_fa);
+	zipFile zip = zipOpen2(tmppath.utf8().get_data(), APPEND_STATUS_CREATE, nullptr, &io);
+	if (zip == nullptr) {
+		add_message(EXPORT_MESSAGE_ERROR, TTR("Save Bundle"), vformat(TTR("Could not create temporary file \"%s\"."), tmppath));
+		return ERR_CANT_CREATE;
+	}
+	WebBundleZipData zd;
+	zd.zip = zip;
+	zd.compression = p_compression;
+	Error err = export_project_files(p_preset, p_debug, _save_web_bundle_file, nullptr, &zd, nullptr);
+	zipClose(zip, nullptr);
+	if (err != OK && err != ERR_SKIP) {
+		add_message(EXPORT_MESSAGE_ERROR, TTR("Save Bundle"), TTR("Failed to export project files."));
+		DirAccess::remove_file_or_error(tmppath);
+		return err;
+	}
+	if (zd.file_count == 0) {
+		DirAccess::remove_file_or_error(tmppath);
+		add_message(EXPORT_MESSAGE_ERROR, TTR("Save Bundle"), TTR("No files to export."));
+		return FAILED;
+	}
+	Ref<DirAccess> da = DirAccess::create(DirAccess::ACCESS_FILESYSTEM);
+	err = da->rename(tmppath, p_path);
+	if (err != OK) {
+		da->remove(tmppath);
+		add_message(EXPORT_MESSAGE_ERROR, TTR("Save Bundle"), vformat(TTR("Failed to move temporary file \"%s\" to \"%s\"."), tmppath, p_path));
+	}
+	return err;
+}
+
 Error EditorExportPlatformWeb::export_project(const Ref<EditorExportPreset> &p_preset, bool p_debug, const String &p_path, BitField<EditorExportPlatform::DebugFlags> p_flags) {
 	ExportNotifier notifier(*this, p_preset, p_debug, p_path, p_flags);
 
@@ -489,6 +547,9 @@ Error EditorExportPlatformWeb::export_project(const Ref<EditorExportPreset> &p_p
 	const String custom_html = p_preset->get("html/custom_html_shell");
 	const bool export_icon = p_preset->get("html/export_icon");
 	const bool pwa = p_preset->get("progressive_web_app/enabled");
+	const String web_bundle_type = p_preset->get("variant/web_bundle_type");
+	const bool opfs_bundle = (web_bundle_type == "opfs_storage");
+	const int opfs_compression = p_preset->get("variant/web_bundle_compression");
 
 	const String base_dir = p_path.get_base_dir();
 	const String base_path = p_path.get_basename();
@@ -515,8 +576,10 @@ Error EditorExportPlatformWeb::export_project(const Ref<EditorExportPreset> &p_p
 
 	// Export pck and shared objects
 	Vector<SharedObject> shared_objects;
-	String pck_path = base_path + ".pck";
-	Error error = save_pack(p_preset, p_debug, pck_path, &shared_objects);
+	String pck_path = base_path + (opfs_bundle ? ".bin" : ".pck");
+	Error error = opfs_bundle
+			? _save_web_bundle(p_preset, p_debug, pck_path, opfs_compression)
+			: save_pack(p_preset, p_debug, pck_path, &shared_objects);
 	if (error != OK) {
 		add_message(EXPORT_MESSAGE_ERROR, TTR("Export"), vformat(TTR("Could not write file: \"%s\"."), pck_path));
 		return error;
@@ -550,6 +613,21 @@ Error EditorExportPlatformWeb::export_project(const Ref<EditorExportPreset> &p_p
 	f = FileAccess::open(base_path + ".wasm", FileAccess::READ);
 	if (f.is_valid()) {
 		file_sizes[base_name + ".wasm"] = (uint64_t)f->get_length();
+	}
+
+	if (opfs_bundle) {
+		uint64_t bundle_bytes = 0;
+		f = FileAccess::open(pck_path, FileAccess::READ);
+		if (f.is_valid()) {
+			bundle_bytes = f->get_length();
+		}
+		f.unref();
+		const String manifest = "{\"bundle\":\"" + pck_path.get_file() + "\",\"sha256\":\"" + FileAccess::get_sha256(pck_path) + "\",\"bytes\":" + itos(bundle_bytes) + "}\n";
+		const CharString manifest_utf8 = manifest.utf8();
+		error = _write_or_error((const uint8_t *)manifest_utf8.get_data(), manifest_utf8.length(), base_dir.path_join("bundle.json"));
+		if (error != OK) {
+			return error;
+		}
 	}
 
 	// Read the HTML shell file (custom or from template).
@@ -869,6 +947,8 @@ Error EditorExportPlatformWeb::_export_project(const Ref<EditorExportPreset> &p_
 		DirAccess::remove_file_or_error(basepath + ".audio.position.worklet.js");
 		DirAccess::remove_file_or_error(basepath + ".service.worker.js");
 		DirAccess::remove_file_or_error(basepath + ".pck");
+		DirAccess::remove_file_or_error(basepath + ".bin");
+		DirAccess::remove_file_or_error(basepath.get_base_dir().path_join("bundle.json"));
 		DirAccess::remove_file_or_error(basepath + ".png");
 		DirAccess::remove_file_or_error(basepath + ".side.wasm");
 		DirAccess::remove_file_or_error(basepath + ".wasm");

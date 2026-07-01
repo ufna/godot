@@ -36,7 +36,7 @@ def get_tools(env: "SConsEnvironment"):
 
 
 def get_opts():
-    from SCons.Variables import BoolVariable
+    from SCons.Variables import BoolVariable, EnumVariable
 
     return [
         ("initial_memory", "Initial WASM memory (in MiB)", 32),
@@ -58,6 +58,13 @@ def get_opts():
             "proxy_to_pthread",
             "Use Emscripten PROXY_TO_PTHREAD option to run the main application code to a separate thread",
             False,
+        ),
+        EnumVariable(
+            "web_bundle_type",
+            "How the game resources are stored/loaded on the web: ram (pck in memory), opfs_storage "
+            "(stream into OPFS, read res:// on demand)",
+            "ram",
+            ["ram", "opfs_storage"],
         ),
         BoolVariable("wasm_simd", "Use WebAssembly SIMD to improve CPU performance", True),
     ]
@@ -302,9 +309,12 @@ def configure(env: "SConsEnvironment"):
     if env["proxy_to_pthread"]:
         env.Append(LINKFLAGS=["-sPROXY_TO_PTHREAD=1"])
         env.Append(CPPDEFINES=["PROXY_TO_PTHREAD_ENABLED"])
-        env["EXPORTED_RUNTIME_METHODS"] += ["_emscripten_proxy_main"]
-        # https://github.com/emscripten-core/emscripten/issues/18034#issuecomment-1277561925
-        env.Append(LINKFLAGS=["-sTEXTDECODER=0"])
+
+    if env["web_bundle_type"] == "opfs_storage":
+        if not env["proxy_to_pthread"]:
+            print_error('"web_bundle_type=opfs_storage" requires "proxy_to_pthread=yes".')
+            sys.exit(255)
+        env.Append(CPPDEFINES=["OPFS_ENABLED"])
 
     # Enable WebAssembly SIMD
     if env["wasm_simd"]:

@@ -111,6 +111,7 @@ class EditorExportPlatformWeb : public EditorExportPlatform {
 	Error _add_manifest_icon(const Ref<EditorExportPreset> &p_preset, const String &p_path, const String &p_icon, int p_size, Array &r_arr);
 	Error _build_pwa(const Ref<EditorExportPreset> &p_preset, const String p_path, const Vector<SharedObject> &p_shared_objects);
 	Error _write_or_error(const uint8_t *p_content, int p_len, String p_path);
+	Error _save_web_bundle(const Ref<EditorExportPreset> &p_preset, bool p_debug, const String &p_path, int p_compression);
 
 	Error _export_project(const Ref<EditorExportPreset> &p_preset, int p_debug_flags);
 	Error _launch_browser(const String &p_bind_host, uint16_t p_bind_port, bool p_use_tls);
