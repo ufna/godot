@@ -49,6 +49,7 @@ struct GCHandleIntPtr {
 	_FORCE_INLINE_ bool operator!=(const GCHandleIntPtr &p_other) { return value != p_other.value; }
 
 	GCHandleIntPtr() = delete;
+	constexpr GCHandleIntPtr(decltype(nullptr)) : value(nullptr) {}
 };
 }
 

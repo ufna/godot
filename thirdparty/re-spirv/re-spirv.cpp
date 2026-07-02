@@ -2311,7 +2311,6 @@ namespace respv {
         std::vector<uint8_t> &optimizedData;
         Options options;
 
-        OptimizerContext() = delete;
     };
 
     static void optimizerEliminateInstruction(uint32_t pInstructionIndex, OptimizerContext &rContext) {
